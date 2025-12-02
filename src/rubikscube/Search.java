@@ -1,42 +1,43 @@
 package rubikscube;
 
 /*
- Attributions & Academic Integrity Notice
- ---------------------------------------
- This search implementation follows the structure of the Kociemba two-phase
- algorithm: phase-1 IDA* to reach subgroup H (with twist/flip/slice heuristics)
- and phase-2 restricted moves using parity + permutation pruning tables.
-*/
+ * This search implementation follows the structure of the Kociemba two-phase
+ * algorithm: phase-1 IDA star to reach subgroup H (with twist/flip/slice heuristics)
+ * and phase-2 restricted moves using parity + permutation pruning tables.
+ */
 
 import java.io.*;
 
-
 // Class Search implements the Two-Phase-Algorithm
-// I like to think of this as the brain it runs two-stage IDA* searches
+// I like to think of this as the brain it runs two-stage IDA star searches
 // and uses a bunch of precomputed tables in CoordCube to make things fast.
 public class Search {
 
-    // search trace storage 
-    // We store the axis (U,R,F,D,L,B -> 0 to 5) and the power (1=90deg,2=180deg,3=270deg) makes it easy for translation later
-    static int[] axis = new int[31];
-    static int[] power = new int[31];
+    // SEARCH TRACE ARRAYS The Manual Stack
+    // Increased size to [40] to prevent ArrayIndexOutOfBoundsException during lookaheads was initially fine at 31 but some solves go deeper
+    // Standard Kociemba solves can briefly exceed depth 30 during phase transitions.
+    
+    // The face being turned (0=U, 1=R, 2=F, 3=D, 4=L, 5=B)
+    static int[] axis = new int[40]; 
+    // The amount of turn (1=90, 2=180, 3=270)
+    static int[] power = new int[40];
 
-    // phase-1 coordinates kept along the search path
-    static int[] flip = new int[31];   // edge flip coordinate
-    static int[] twist = new int[31];  // corner twist coordinate
-    static int[] slice = new int[31];  // slice coordinate (coarse edge grouping)
+    // Phase 1 Coordinates State at each depth
+    static int[] flip = new int[40];   // edge flip coordinate
+    static int[] twist = new int[40];  // corner twist coordinate
+    static int[] slice = new int[40];  // slice coordinate (coarse edge grouping)
 
-    // phase-2 coordinates (used after reaching subgroup H)
-    static int[] parity = new int[31];   // corner/edge parity
-    static int[] URFtoDLF = new int[31]; // URF-to-DLF corner index
-    static int[] FRtoBR = new int[31];   // FR-to-BR edge index
-    static int[] URtoUL = new int[31];   // UR-to-UL edge index
-    static int[] UBtoDF = new int[31];   // UB-to-DF edge index
-    static int[] URtoDF = new int[31];   // merged UR-to-DF index used for pruning
+    // Phase 2 Coordinates State at each depth
+    static int[] parity = new int[40];   // corner/edge parity
+    static int[] URFtoDLF = new int[40]; // URF-to-DLF corner index
+    static int[] FRtoBR = new int[40];   // FR-to-BR edge index
+    static int[] URtoUL = new int[40];   // UR-to-UL edge index
+    static int[] UBtoDF = new int[40];   // UB-to-DF edge index
+    static int[] URtoDF = new int[40];   // merged UR-to-DF index used for pruning
 
-    // IDA* heuristic estimates (from pruning tables in CoordCube)
-    static int[] minDistPhase1 = new int[31];
-    static int[] minDistPhase2 = new int[31];
+    // IDA star heuristic estimates from pruning tables in CoordCube
+    static int[] minDistPhase1 = new int[40];
+    static int[] minDistPhase2 = new int[40];
 
     // generate the solution string from the axis/power arrays
     // also translate F' -> FFF and F2 -> FF to keep a simple move alphabet
@@ -54,7 +55,6 @@ public class Search {
                         case 5 -> s.append("B");
                     }
                 }
-                    
                 case 2 -> {
                     switch(axis[i]) {
                         case 0 -> s.append("UU");
@@ -65,7 +65,6 @@ public class Search {
                         case 5 -> s.append("BB");
                     }
                 }
-                   
                 case 3 -> {
                     switch(axis[i]) {
                         case 0 -> s.append("UUU");
@@ -76,20 +75,18 @@ public class Search {
                         case 5 -> s.append("BBB");
                     }
                 }
-                
+            }
         }
+        return s.toString().trim();
     }
-    return s.toString();
-}
 
     // Compute the solver string for a given cubie-level cube state
-    // maxDepth caps the total allowed moves (phase1 + phase2)
-    // timeOut in seconds limits the total runtime (safety valve)
-    // Returns a move string or "Error X" codes on malformed / unsolvable inputs
+    // maxDepth caps the total allowed moves phase1 + phase2
+    // timeOut in seconds limits the total runtime safety valve
     public static String solution(CubieCube CC, int maxDepth, long timeOut) throws IOException, IncorrectFormatException {
         int s;
 
-        // Quick sanity check (structure and parity). Returns Error codes if the cube is malformed.
+        // Quick sanity check structure and parity.
         if ((s = CC.verify()) != 0)
             return "Error " + Math.abs(s);
 
@@ -108,36 +105,33 @@ public class Search {
         URtoUL[0] = c.URtoUL;
         UBtoDF[0] = c.UBtoDF;
 
-        // small safety: ensures IDA* doesn't instantly fail for depth=1
+        // just ensures IDA star doesn't instantly fail for depth=1
         minDistPhase1[1] = 1;
         int mv, n = 0;
         boolean busy = false;
         int depthPhase1 = 1;
 
-        long tStart = System.currentTimeMillis(); // for timrout
+        long tStart = System.currentTimeMillis();
 
         // Main loop for phase-1
         // We iterate over increasing depthPhase1 until we find a depth where phase-2 can finish.
-        // Also note this ida star algorithm is more optimized for speed because we dont actually use nodes or a stack we do Structure of arrays
-        // Its like a manual stack in a way but we just keep track of the depth and arrays of coords in the indexes of arrays like parallel lists
         do {
             do {
                 if ((depthPhase1 - n > minDistPhase1[n + 1]) && !busy) {
 
                     // initialize next move: alternate axes to avoid repeating same face immediately
-                    if (axis[n] == 0 || axis[n] == 3) { // U or D were last
-                        axis[++n] = 1; // start with R
+                    if (n == 0 || axis[n] == 0 || axis[n] == 3) {
+                        axis[++n] = 1; 
                     } else {
-                        axis[++n] = 0; // otherwise start with U
+                        axis[++n] = 0; 
                     }
-                    power[n] = 1; // start with quarter-turn
+                    power[n] = 1; 
                 } else if (++power[n] > 3) {
                     // power overflow so increment axis
                     do {
                         if (++axis[n] > 5) {
-
                             // timeout check in s
-                            if (System.currentTimeMillis() - tStart > timeOut << 10)
+                            if (System.currentTimeMillis() - tStart > timeOut * 1000)
                                 return "Error 8";
 
                             if (n == 0) {
@@ -155,11 +149,11 @@ public class Search {
                                 busy = true;
                                 break;
                             }
-
                         } else {
                             power[n] = 1;
                             busy = false;
                         }
+                    // Redundant move check - don't do U then U
                     } while (n != 0 && (axis[n - 1] == axis[n] || axis[n - 1] - 3 == axis[n]));
                 } else
                     busy = false;
@@ -183,16 +177,16 @@ public class Search {
                     if (s == depthPhase1 || (axis[depthPhase1 - 1] != axis[depthPhase1] && axis[depthPhase1 - 1] != axis[depthPhase1] + 3))
                         return solutionToString(s);
                 }
-
             }
         } while (true);
     }
 
-    // Apply phase2 of algorithm and return the combined phase1 and phase2 depth. In phase2, only the moves
-    // U,D,R2,F2,L2 and B2 are allowed.
+    // Apply phase2 of algorithm and return the combined phase1 and phase2 depth. 
+    // In phase2, only the moves U,D,R2,F2,L2 and B2 are allowed.
     public static int totalDepth(int depthPhase1, int maxDepth) {
         int mv, d1, d2;
-        int maxDepthPhase2 = Math.min(10, maxDepth - depthPhase1);    // Allow only max 10 moves in phase2
+        int maxDepthPhase2 = Math.min(10, maxDepth - depthPhase1);
+        
         for (int i = 0; i < depthPhase1; i++) {
             mv = 3 * axis[i] + power[i] - 1;
             URFtoDLF[i + 1] = CoordCube.URFtoDLF_Move[URFtoDLF[i]][mv];
@@ -215,48 +209,45 @@ public class Search {
                 (CoordCube.NUM_SLICE_PERMUTATIONS_PHASE2 * URtoDF[depthPhase1] + FRtoBR[depthPhase1]) * 2 + parity[depthPhase1])) > maxDepthPhase2)
             return -1;
 
-        if ((minDistPhase2[depthPhase1] = Math.max(d1, d2)) == 0)// already solved
+        if ((minDistPhase2[depthPhase1] = Math.max(d1, d2)) == 0)
             return depthPhase1;
 
-        // now set up search
-
+        // Phase 2 Search
         int depthPhase2 = 1;
         int n = depthPhase1;
         boolean busy = false;
         power[depthPhase1] = 0;
         axis[depthPhase1] = 0;
-        minDistPhase2[n + 1] = 1;    // else failure for depthPhase2=1, n=0
+        minDistPhase2[n + 1] = 1;
 
         do {
             do {
                 if ((depthPhase1 + depthPhase2 - n > minDistPhase2[n + 1]) && !busy) {
-
                     if (axis[n] == 0 || axis[n] == 3) {  // Initialize next move
                         axis[++n] = 1;
-                        power[n] = 2;
+                        power[n] = 2; // R2, L2, F2, B2
                     } else {
                         axis[++n] = 0;
-                        power[n] = 1;
+                        power[n] = 1; // U, D
                     }
                 } else if ((axis[n] == 0 || axis[n] == 3) ? (++power[n] > 3) : ((power[n] = power[n] + 2) > 3)) {
-                    do {            // increment axis
+                    do {
                         if (++axis[n] > 5) {
                             if (n == depthPhase1) {
                                 if (depthPhase2 >= maxDepthPhase2)
                                     return -1;
                                 else {
-                                    depthPhase2++;
+                                    depthPhase2++; // Increase depth
                                     axis[n] = 0;
                                     power[n] = 1;
                                     busy = false;
                                     break;
                                 }
                             } else {
-                                n--;
+                                n--; // Pop stack
                                 busy = true;
                                 break;
                             }
-
                         } else {
                             if (axis[n] == 0 || axis[n] == 3)
                                 power[n] = 1;
@@ -269,19 +260,27 @@ public class Search {
                     busy = false;
             } while (busy);
 
-            // compute new coordinates and new minDist
+            // Compute new coordinates
             mv = 3 * axis[n] + power[n] - 1;
+            
+            // Safety Check: If mv is invalid, backtrack immediately (prevents Index 21 crash)
+            if (mv < 0 || mv >= 18) {
+                busy = true; // Force loop to retry
+                continue;
+            }
 
             URFtoDLF[n + 1] = CoordCube.URFtoDLF_Move[URFtoDLF[n]][mv];
             FRtoBR[n + 1] = CoordCube.FRtoBR_Move[FRtoBR[n]][mv];
             parity[n + 1] = CoordCube.parityMove[parity[n]][mv];
             URtoDF[n + 1] = CoordCube.URtoDF_Move[URtoDF[n]][mv];
 
-            minDistPhase2[n + 1] = Math.max(CoordCube.getPruning(CoordCube.Slice_URtoDF_Parity_Prune, (CoordCube.NUM_SLICE_PERMUTATIONS_PHASE2
-                    * URtoDF[n + 1] + FRtoBR[n + 1])
-                    * 2 + parity[n + 1]), CoordCube.getPruning(CoordCube.Slice_URFtoDLF_Parity_Prune, (CoordCube.NUM_SLICE_PERMUTATIONS_PHASE2
-                    * URFtoDLF[n + 1] + FRtoBR[n + 1])
-                    * 2 + parity[n + 1]));
+            // Heuristic Check
+            minDistPhase2[n + 1] = Math.max(
+                CoordCube.getPruning(CoordCube.Slice_URtoDF_Parity_Prune, 
+                    (CoordCube.NUM_SLICE_PERMUTATIONS_PHASE2 * URtoDF[n + 1] + FRtoBR[n + 1]) * 2 + parity[n + 1]),
+                CoordCube.getPruning(CoordCube.Slice_URFtoDLF_Parity_Prune, 
+                    (CoordCube.NUM_SLICE_PERMUTATIONS_PHASE2 * URFtoDLF[n + 1] + FRtoBR[n + 1]) * 2 + parity[n + 1])
+            );
 
         } while (minDistPhase2[n + 1] != 0);
         return depthPhase1 + depthPhase2;

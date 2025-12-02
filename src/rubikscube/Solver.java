@@ -35,7 +35,7 @@ public class Solver {
     
         // Pass in Cubie Cube to Search with a max depth of 20 ( According to Sources this is the number that isnt most optimal but for speed)
         // The Timer is set to max 10 seconds 
-		String SolutionPath = Search.solution( CC, 20, 10);
+		String SolutionPath = Search.solution( CC, 21, 10);
         System.out.println("Solution: " + SolutionPath);
 
         // Testing that the solution algorithm spits out is actually valid

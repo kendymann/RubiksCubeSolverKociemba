@@ -1,30 +1,16 @@
 package rubikscube;
 
 /*
- Attributions & Academic Integrity Notice
- ---------------------------------------
- This coordinate-level representation and its move/pruning tables are adapted
- from the published Kociemba two-phase algorithm concepts (http://kociemba.org/cube.htm)
- and widely circulated educational resources explaining twist/flip/slice and
- corner/edge permutation indexing. Core retained ideas:
-     - Generation of move tables by exhaustive application of 6 face moves.
-     - Pruning tables built via BFS with nibble-packed storage.
-     - Combination/permutation indexing (binomial + factorial encoding).
+ * This class handles the Coordinate Level of the cube, which is essential for the Kociemba algorithms speed.
+ * Instead of thinking about cubies, we think about coordinates like Twist, Flip, and Slice.
+ * I adapted the coordinate definitions and the move table generation from http://kociemba.org/cube.htm.
+ * The main idea is to pre-compute everything (Move Tables and Pruning Tables) so the search is fast.
+ */
 
- Personal contributions / modifications:
-     - Rewritten explanatory comments for constants, loops, and pruning logic.
-     - Integration with custom `CubieCube` implementation and higher-level solver code.
-     - Minor stylistic organization for readability.
-
- Permitted Use Context:
- Researching and adapting known algorithms is allowed under CMPT 225 guidelines.
- Attribution supplied here; added comments and formatting are original work.
-*/
-
-// Representation of the cube on the coordinate level
 public class CoordCube {
+
     // Const definitions mostly taken from Kociemba Official Documentation
-    // Lots of refereneces used from Official docs and online forums, to make sure the mappings are correct
+    // Lots of references used from Official docs and online forums, to make sure the mappings are correct
 
     public static final int NUM_URF_DLB = 40320;     // 8! permutations of all the corners
     public static final int NUM_UR_BR = 479001600;   // 12! permutations of all the edges
@@ -43,11 +29,12 @@ public class CoordCube {
     public static final short NUM_EDGE_MERGE_UB_DF = 1320;     // Helper constants for merging edge permutations.
     public static final short NUM_EDGE_PERMUTATIONS_PHASE2 = 20160;    // Permutations of the 8 edges in the U and D layers for Phase 2.
 
+    // The actual coordinates for this specific cube state
     public short twist;
     public short flip;
     public short parity;
-    public short URFtoDLF;
     public short FRtoBR;
+    public short URFtoDLF;
     public short URtoUL;
     public short UBtoDF;
     public int URtoDF;
@@ -63,309 +50,243 @@ public class CoordCube {
         UBtoDF = cubieCube.getUBtoDF();
         URtoDF = cubieCube.getURtoDF(); 
     }
-    // apply move m to all coordinates
-    void move(int m) {
-        twist = twistMove[twist][m]; // update twist
-        flip = flipMove[flip][m]; // update flip
-        parity = parityMove[parity][m]; // update parity
-        FRtoBR = FRtoBR_Move[FRtoBR][m]; // update slice perm
-        URFtoDLF = URFtoDLF_Move[URFtoDLF][m]; // update corner perm
-        URtoUL = URtoUL_Move[URtoUL][m]; // update helper UR/UF/UL
-        UBtoDF = UBtoDF_Move[UBtoDF][m]; // update helper UB/DR/DF
-        // merge only valid helper ranges (both < 336)
-        if (URtoUL < 336 && UBtoDF < 336) {
-            URtoDF = MergeURtoULandUBtoDF[URtoUL][UBtoDF]; // compute merged
-        }
+
+    // PRUNING TABLES (Heuristics)
+    // These tables store the minimum number of moves to reach the solved state.
+    // I decided to use simple byte arrays instead of the original nibble packing 
+    // to keep the code cleaner and easier to understand.
+
+    // Phase 1 Tables
+    public static byte[] Slice_Twist_Prune = new byte[NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS];
+    public static byte[] Slice_Flip_Prune = new byte[NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS];
+
+    // Phase 2 Tables
+    public static byte[] Slice_URFtoDLF_Parity_Prune = new byte[NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES];
+    public static byte[] Slice_URtoDF_Parity_Prune = new byte[NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES];
+
+    // Helpers to access the tables
+    public static void setPruning(byte[] table, int index, byte value) {
+        table[index] = value;
     }
 
-    // corner twist move table [twist][move] -> new twist
+    public static byte getPruning(byte[] table, int index) {
+        return table[index];
+    }
+
+    // MOVE TABLES
+    // These allow us to apply a move to a coordinate instantly (O(1)) without recalculating everything.
     public static short[][] twistMove = new short[NUM_CORNER_ORIENTATIONS][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_CORNER_ORIENTATIONS; i++) { // iterate all twists
-            cube.setTwist(i); // set base twist state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 quarter-turn variants
-                    cube.multiplyCorner(CubieCube.moves[j]); // apply twist
-                    twistMove[i][3 * j + k] = cube.getTwist(); // record result
-                }
-                cube.multiplyCorner(CubieCube.moves[j]); // 4th turn to restore
-            }
-        }
-    }
-
-    // edge flip move table [flip][move] -> new flip
     public static short[][] flipMove = new short[NUM_EDGE_ORIENTATIONS][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_EDGE_ORIENTATIONS; i++) { // iterate all flips
-            cube.setFlip(i); // set base flip state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 quarter-turn variants
-                    cube.multiplyEdge(CubieCube.moves[j]); // apply flip
-                    flipMove[i][3 * j + k] = cube.getFlip(); // record result
-                }
-                cube.multiplyEdge(CubieCube.moves[j]); // 4th turn to restore
-            }
-        }
-    }
-
-    // parity move table: toggles based on move type
-    public static short[][] parityMove = {
-            {1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1},
-            {0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0}
-    };
-
-    // FR..BR slice edges move table
+    public static short[][] parityMove = { {1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1},
+                                           {0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0} };
     public static short[][] FRtoBR_Move = new short[NUM_SLICE_EDGE_PERMUTATIONS][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_SLICE_EDGE_PERMUTATIONS; i++) { // iterate all slice perms
-            cube.setFRtoBR(i); // set base slice state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 variants
-                    cube.multiplyEdge(CubieCube.moves[j]); // apply
-                    FRtoBR_Move[i][3 * j + k] = cube.getFRtoBR(); // record
-                }
-                cube.multiplyEdge(CubieCube.moves[j]); // restore
-            }
-        }
-    }
-
-    // URF..DLF corner permutation move table
     public static short[][] URFtoDLF_Move = new short[NUM_CORNER_PERMUTATIONS][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_CORNER_PERMUTATIONS; i++) { // iterate corner perms
-            cube.setURFtoDLF(i); // set base corner state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 variants
-                    cube.multiplyCorner(CubieCube.moves[j]); // apply
-                    URFtoDLF_Move[i][3 * j + k] = cube.getURFtoDLF(); // record
-                }
-                cube.multiplyCorner(CubieCube.moves[j]); // restore
-            }
-        }
-    }
-
-    // UR..DF edge permutation move table (phase-2)
     public static short[][] URtoDF_Move = new short[NUM_EDGE_PERMUTATIONS_PHASE2][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_EDGE_PERMUTATIONS_PHASE2; i++) { // iterate edge perms
-            cube.setURtoDF(i); // set base edge state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 variants
-                    cube.multiplyEdge(CubieCube.moves[j]); // apply
-                    URtoDF_Move[i][3 * j + k] = (short) cube.getURtoDF(); // record (phase-2 only)
-                }
-                cube.multiplyEdge(CubieCube.moves[j]); // restore
-            }
-        }
-    }
-
-    // helper: UR/UF/UL edges move table
     public static short[][] URtoUL_Move = new short[NUM_EDGE_MERGE_UR_UL][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_EDGE_MERGE_UR_UL; i++) { // iterate helper coord
-            cube.setURtoUL(i); // set base helper state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 variants
-                    cube.multiplyEdge(CubieCube.moves[j]); // apply
-                    URtoUL_Move[i][3 * j + k] = cube.getURtoUL(); // record
-                }
-                cube.multiplyEdge(CubieCube.moves[j]); // restore
-            }
-        }
-    }
-
-    // helper: UB/DR/DF edges move table
     public static short[][] UBtoDF_Move = new short[NUM_EDGE_MERGE_UB_DF][NUM_MOVES];
-
-    static {
-        CubieCube cube = new CubieCube(); // temp workspace cube
-        for (short i = 0; i < NUM_EDGE_MERGE_UB_DF; i++) { // iterate helper coord
-            cube.setUBtoDF(i); // set base helper state
-            for (int j = 0; j < 6; j++) { // six face moves
-                for (int k = 0; k < 3; k++) { // 3 variants
-                    cube.multiplyEdge(CubieCube.moves[j]); // apply
-                    UBtoDF_Move[i][3 * j + k] = cube.getUBtoDF(); // record
-                }
-                cube.multiplyEdge(CubieCube.moves[j]); // restore
-            }
-        }
-    }
-
-    // merge helper coords -> phase-2 UR..DF edge coord
     public static short[][] MergeURtoULandUBtoDF = new short[336][336];
 
+    // STATIC INITIALIZATION
+    // This runs once when the program starts to fill all the tables takes around 1-2 seconds
     static {
-        // both helpers < 336 means edges outside slice; valid for merge
-        for (short uRtoUL = 0; uRtoUL < 336; uRtoUL++) { // iterate first helper
-            for (short uBtoDF = 0; uBtoDF < 336; uBtoDF++) { // iterate second helper
-                MergeURtoULandUBtoDF[uRtoUL][uBtoDF] = (short) CubieCube.getURtoDF(uRtoUL, uBtoDF); // compute merged
-            }
-        }
-    }
+        // GENERATE MOVE TABLES
+        // We simulate moves on a temporary cube to fill the lookup tables.
+        CubieCube cc = new CubieCube();
 
-    // store pruning nibble (two entries per byte)
-    public static void setPruning(byte[] table, int index, byte value) {
-        if ((index & 1) == 0)
-            table[index / 2] &= 0xf0 | value; // write low nibble
-        else
-            table[index / 2] &= 0x0f | (value << 4); // write high nibble
-    }
-
-    // read pruning nibble (two entries per byte)
-    public static byte getPruning(byte[] table, int index) {
-        if ((index & 1) == 0)
-            return (byte) (table[index / 2] & 0x0f); // read low nibble
-        else
-            return (byte) ((table[index / 2] & 0xf0) >>> 4); // read high nibble
-    }
-
-    // phase-2 pruning: slice + corner + parity
-    public static byte[] Slice_URFtoDLF_Parity_Prune = new byte[NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES / 2];
-
-    static {
-        for (int i = 0; i < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES / 2; i++) {
-            Slice_URFtoDLF_Parity_Prune[i] = -1; // init all entries to -1 (unknown)
-        }
-        int depth = 0; // BFS depth
-        setPruning(Slice_URFtoDLF_Parity_Prune, 0, (byte) 0); // solved state at depth 0
-        int done = 1; // number of filled states
-        while (done != NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES) { // until full table
-            for (int i = 0; i < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES; i++) { // scan all states
-                int parity = i % 2; // current parity
-                int URFtoDLF = (i / 2) / NUM_SLICE_PERMUTATIONS_PHASE2; // corner coord
-                int slice = (i / 2) % NUM_SLICE_PERMUTATIONS_PHASE2; // slice coord
-                if (getPruning(Slice_URFtoDLF_Parity_Prune, i) == depth) { // frontier at this depth
-                    for (int j = 0; j < 18; j++) { // try all moves
-                        switch (j) { // skip redundant double turns for pruning speed
-                            case 3, 5, 6, 8, 12, 14, 15, 17 -> {
-                                continue; // skip
-                            }
-                            default -> {
-                                int newSlice = FRtoBR_Move[slice][j]; // next slice
-                                int newURFtoDLF = URFtoDLF_Move[URFtoDLF][j]; // next corner perm
-                                int newParity = parityMove[parity][j]; // next parity
-                                int idx = (NUM_SLICE_PERMUTATIONS_PHASE2 * newURFtoDLF + newSlice) * 2 + newParity; // packed index
-                                if (getPruning(Slice_URFtoDLF_Parity_Prune, idx) == 0x0f) { // if not set yet
-                                    setPruning(Slice_URFtoDLF_Parity_Prune, idx, (byte) (depth + 1)); // set depth+1
-                                    done++; // progress
-                                }
-                            }
-                        }
-                        // skip redundant double turns for pruning speed
-                                            }
+        // Twist (Corner Orientation)
+        for (short i = 0; i < NUM_CORNER_ORIENTATIONS; i++) {
+            cc.setTwist(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyCorner(CubieCube.moves[m]);
+                    twistMove[i][3 * m + k] = cc.getTwist();
                 }
+                cc.multiplyCorner(CubieCube.moves[m]); // restore
             }
-            depth++; // next BFS layer
         }
-    }
 
-    // phase-2 pruning: slice + edge + parity
-    public static byte[] Slice_URtoDF_Parity_Prune = new byte[NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES / 2];
-
-    static {
-        for (int i = 0; i < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES / 2; i++)
-            Slice_URtoDF_Parity_Prune[i] = -1; // init unknown
-        int depth = 0; // BFS depth
-        setPruning(Slice_URtoDF_Parity_Prune, 0, (byte) 0); // solved state
-        int done = 1; // filled entries
-        while (done != NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES) { // until full
-            for (int i = 0; i < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES; i++) { // scan states
-                int parity = i % 2; // current parity
-                int URtoDF = (i / 2) / NUM_SLICE_PERMUTATIONS_PHASE2; // edge coord
-                int slice = (i / 2) % NUM_SLICE_PERMUTATIONS_PHASE2; // slice coord
-                if (getPruning(Slice_URtoDF_Parity_Prune, i) == depth) { // frontier
-                    for (int j = 0; j < 18; j++) { // moves
-                        switch (j) { // skip redundant double turns
-                            case 3, 5, 6, 8, 12, 14, 15, 17 -> {
-                                continue; // skip
-                            }
-                            default -> {
-                                int newSlice = FRtoBR_Move[slice][j]; // next slice
-                                int newURtoDF = URtoDF_Move[URtoDF][j]; // next edge perm
-                                int newParity = parityMove[parity][j]; // next parity
-                                int idx = (NUM_SLICE_PERMUTATIONS_PHASE2 * newURtoDF + newSlice) * 2 + newParity; // packed
-                                if (getPruning(Slice_URtoDF_Parity_Prune, idx) == 0x0f) { // if unset
-                                    setPruning(Slice_URtoDF_Parity_Prune, idx, (byte) (depth + 1)); // set
-                                    done++; // progress
-                                }
-                            }
-                        }
-                        // skip redundant double turns
-                                            }
+        // Flip (Edge Orientation)
+        for (short i = 0; i < NUM_EDGE_ORIENTATIONS; i++) {
+            cc.setFlip(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyEdge(CubieCube.moves[m]);
+                    flipMove[i][3 * m + k] = cc.getFlip();
                 }
+                cc.multiplyEdge(CubieCube.moves[m]);
             }
-            depth++; // next layer
         }
-    }
 
-    // phase-1 pruning: slice position + corner twist
-    public static byte[] Slice_Twist_Prune = new byte[NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS / 2 + 1];
+        // Slice Phase 1 Edges - Mapped via FRtoBR coordinate
+        for (short i = 0; i < NUM_SLICE_EDGE_PERMUTATIONS; i++) {
+            cc.setFRtoBR(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyEdge(CubieCube.moves[m]);
+                    FRtoBR_Move[i][3 * m + k] = cc.getFRtoBR();
+                }
+                cc.multiplyEdge(CubieCube.moves[m]);
+            }
+        }
 
-    static {
-        for (int i = 0; i < NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS / 2 + 1; i++)
-            Slice_Twist_Prune[i] = -1; // init unknown
+        // Phase 2 Corners
+        for (short i = 0; i < NUM_CORNER_PERMUTATIONS; i++) {
+            cc.setURFtoDLF(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyCorner(CubieCube.moves[m]);
+                    URFtoDLF_Move[i][3 * m + k] = cc.getURFtoDLF();
+                }
+                cc.multiplyCorner(CubieCube.moves[m]);
+            }
+        }
 
-        int depth = 0; // BFS depth
-        setPruning(Slice_Twist_Prune, 0, (byte) 0); // solved state
-        int done = 1; // filled entries
-        while (done != NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS) { // until full
-            for (int i = 0; i < NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS; i++) { // scan states
-                int twist = i / NUM_SLICE_POSITIONS_PHASE1; // corner twist coord
-                int slice = i % NUM_SLICE_POSITIONS_PHASE1; // slice position coord
-                if (getPruning(Slice_Twist_Prune, i) == depth) { // frontier
-                    for (int j = 0; j < 18; j++) { // moves
-                        int newSlice = FRtoBR_Move[slice * 24][j] / 24; // project to position
-                        int newTwist = twistMove[twist][j]; // update twist
-                        int idx = NUM_SLICE_POSITIONS_PHASE1 * newTwist + newSlice; // packed index
-                        if (getPruning(Slice_Twist_Prune, idx) == 0x0f) { // if unset
-                            setPruning(Slice_Twist_Prune, idx, (byte) (depth + 1)); // set
-                            done++; // progress
+        // Phase 2 Edges Main
+        for (short i = 0; i < NUM_EDGE_PERMUTATIONS_PHASE2; i++) {
+            cc.setURtoDF(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyEdge(CubieCube.moves[m]);
+                    URtoDF_Move[i][3 * m + k] = (short) cc.getURtoDF();
+                }
+                cc.multiplyEdge(CubieCube.moves[m]);
+            }
+        }
+
+        // Helpers for Phase 2 Edge merging
+        for (short i = 0; i < NUM_EDGE_MERGE_UR_UL; i++) {
+            cc.setURtoUL(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyEdge(CubieCube.moves[m]);
+                    URtoUL_Move[i][3 * m + k] = cc.getURtoUL();
+                }
+                cc.multiplyEdge(CubieCube.moves[m]);
+            }
+        }
+        for (short i = 0; i < NUM_EDGE_MERGE_UB_DF; i++) {
+            cc.setUBtoDF(i);
+            for (int m = 0; m < 6; m++) {
+                for (int k = 0; k < 3; k++) {
+                    cc.multiplyEdge(CubieCube.moves[m]);
+                    UBtoDF_Move[i][3 * m + k] = cc.getUBtoDF();
+                }
+                cc.multiplyEdge(CubieCube.moves[m]);
+            }
+        }
+
+        // Merge Table
+        for (short u = 0; u < 336; u++) {
+            for (short v = 0; v < 336; v++) {
+                MergeURtoULandUBtoDF[u][v] = (short) CubieCube.getURtoDF(u, v);
+            }
+        }
+
+        // GENERATE PRUNING TABLES with bfs backwards search 
+        // We use Breadth-First Search to find the shortest distance from the solved state
+        // to every other state in the coordinate graph.
+        // Literally just open up to 18 around the current + 1 dist
+
+        // Phase 1: Twist Pruning
+        for(int i=0; i<Slice_Twist_Prune.length; i++) Slice_Twist_Prune[i] = -1; // -1 means unvisited
+        setPruning(Slice_Twist_Prune, 0, (byte)0);
+        int done = 1;
+        int depth = 0;
+        while(done < NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS) {
+            for(int i=0; i<NUM_SLICE_POSITIONS_PHASE1 * NUM_CORNER_ORIENTATIONS; i++) {
+                if(getPruning(Slice_Twist_Prune, i) == depth) {
+                    int twist = i / NUM_SLICE_POSITIONS_PHASE1;
+                    int slice = i % NUM_SLICE_POSITIONS_PHASE1;
+                    for(int j=0; j<NUM_MOVES; j++) {
+                        int newTwist = twistMove[twist][j];
+                        int newSlice = FRtoBR_Move[slice * 24][j] / 24;
+                        int idx = NUM_SLICE_POSITIONS_PHASE1 * newTwist + newSlice;
+                        if(getPruning(Slice_Twist_Prune, idx) == -1) {
+                            setPruning(Slice_Twist_Prune, idx, (byte)(depth + 1));
+                            done++;
                         }
                     }
                 }
             }
-            depth++; // next layer
+            depth++;
         }
-    }
 
-    // phase-1 pruning: slice position + edge flip
-    public static byte[] Slice_Flip_Prune = new byte[NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS / 2];
-
-    static {
-        for (int i = 0; i < NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS / 2; i++)
-            Slice_Flip_Prune[i] = -1; // init unknown
-        int depth = 0; // BFS depth
-        setPruning(Slice_Flip_Prune, 0, (byte) 0); // solved state
-        int done = 1; // filled entries
-        while (done != NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS) { // until full
-            for (int i = 0; i < NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS; i++) { // scan states
-                int flip = i / NUM_SLICE_POSITIONS_PHASE1; // edge flip coord
-                int slice = i % NUM_SLICE_POSITIONS_PHASE1; // slice position coord
-                if (getPruning(Slice_Flip_Prune, i) == depth) { // frontier
-                    for (int j = 0; j < 18; j++) { // moves
-                        int newSlice = FRtoBR_Move[slice * 24][j] / 24; // project to position
-                        int newFlip = flipMove[flip][j]; // update flip
-                        int idx = NUM_SLICE_POSITIONS_PHASE1 * newFlip + newSlice; // packed index
-                        if (getPruning(Slice_Flip_Prune, idx) == 0x0f) { // if unset
-                            setPruning(Slice_Flip_Prune, idx, (byte) (depth + 1)); // set
-                            done++; // progress
+        // Phase 1: Flip Pruning
+        for(int i=0; i<Slice_Flip_Prune.length; i++) Slice_Flip_Prune[i] = -1;
+        setPruning(Slice_Flip_Prune, 0, (byte)0);
+        done = 1; depth = 0;
+        while(done < NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS) {
+            for(int i=0; i<NUM_SLICE_POSITIONS_PHASE1 * NUM_EDGE_ORIENTATIONS; i++) {
+                if(getPruning(Slice_Flip_Prune, i) == depth) {
+                    int flip = i / NUM_SLICE_POSITIONS_PHASE1;
+                    int slice = i % NUM_SLICE_POSITIONS_PHASE1;
+                    for(int j=0; j<NUM_MOVES; j++) {
+                        int newFlip = flipMove[flip][j];
+                        int newSlice = FRtoBR_Move[slice * 24][j] / 24;
+                        int idx = NUM_SLICE_POSITIONS_PHASE1 * newFlip + newSlice;
+                        if(getPruning(Slice_Flip_Prune, idx) == -1) {
+                            setPruning(Slice_Flip_Prune, idx, (byte)(depth + 1));
+                            done++;
                         }
                     }
                 }
             }
-            depth++; // next layer
+            depth++;
+        }
+
+        // Phase 2: Corner + Slice + Parity Pruning
+        for(int i=0; i<Slice_URFtoDLF_Parity_Prune.length; i++) Slice_URFtoDLF_Parity_Prune[i] = -1;
+        setPruning(Slice_URFtoDLF_Parity_Prune, 0, (byte)0);
+        done = 1; depth = 0;
+        while(done < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES) {
+            for(int i=0; i<NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_CORNER_PERMUTATIONS * NUM_PARITIES; i++) {
+                if(getPruning(Slice_URFtoDLF_Parity_Prune, i) == depth) {
+                    int parity = i % 2;
+                    int perm = (i / 2) / NUM_SLICE_PERMUTATIONS_PHASE2;
+                    int slice = (i / 2) % NUM_SLICE_PERMUTATIONS_PHASE2;
+                    for(int j=0; j<NUM_MOVES; j++) {
+                        // Skip moves not allowed in Phase 2
+                        if(j==3||j==5||j==6||j==8||j==12||j==14||j==15||j==17) continue; 
+                        
+                        int newSlice = FRtoBR_Move[slice][j];
+                        int newPerm = URFtoDLF_Move[perm][j];
+                        int newParity = parityMove[parity][j];
+                        int idx = (NUM_SLICE_PERMUTATIONS_PHASE2 * newPerm + newSlice) * 2 + newParity;
+                        if(getPruning(Slice_URFtoDLF_Parity_Prune, idx) == -1) {
+                            setPruning(Slice_URFtoDLF_Parity_Prune, idx, (byte)(depth + 1));
+                            done++;
+                        }
+                    }
+                }
+            }
+            depth++;
+        }
+
+        // Phase 2: Edge + Slice + Parity Pruning
+        for(int i=0; i<Slice_URtoDF_Parity_Prune.length; i++) Slice_URtoDF_Parity_Prune[i] = -1;
+        setPruning(Slice_URtoDF_Parity_Prune, 0, (byte)0);
+        done = 1; depth = 0;
+        while(done < NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES) {
+            for(int i=0; i<NUM_SLICE_PERMUTATIONS_PHASE2 * NUM_EDGE_PERMUTATIONS_PHASE2 * NUM_PARITIES; i++) {
+                if(getPruning(Slice_URtoDF_Parity_Prune, i) == depth) {
+                    int parity = i % 2;
+                    int perm = (i / 2) / NUM_SLICE_PERMUTATIONS_PHASE2;
+                    int slice = (i / 2) % NUM_SLICE_PERMUTATIONS_PHASE2;
+                    for(int j=0; j<NUM_MOVES; j++) {
+                        if(j==3||j==5||j==6||j==8||j==12||j==14||j==15||j==17) continue; 
+                        
+                        int newSlice = FRtoBR_Move[slice][j];
+                        int newPerm = URtoDF_Move[perm][j];
+                        int newParity = parityMove[parity][j];
+                        int idx = (NUM_SLICE_PERMUTATIONS_PHASE2 * newPerm + newSlice) * 2 + newParity;
+                        if(getPruning(Slice_URtoDF_Parity_Prune, idx) == -1) {
+                            setPruning(Slice_URtoDF_Parity_Prune, idx, (byte)(depth + 1));
+                            done++;
+                        }
+                    }
+                }
+            }
+            depth++;
         }
     }
 }
