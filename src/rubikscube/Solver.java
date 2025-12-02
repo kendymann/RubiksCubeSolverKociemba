@@ -6,18 +6,20 @@ import java.lang.invoke.MethodHandles;
 
 public class Solver {
 
+    // Commented out all testing functions and prints for submission
+
     // Must check if the solves are valid after such a grind. This actually caught my bad translation logic so definitely a lifesaver!
-    public static boolean TestCorrectSolve( String filename, String Solution ) throws IOException, IncorrectFormatException {
-        RubiksCube RC = new RubiksCube( filename );
-        RC.applyMoves( Solution );
-        return RC.isSolved();
-    }
+    // public static boolean TestCorrectSolve( String filename, String Solution ) throws IOException, IncorrectFormatException {
+    //     RubiksCube RC = new RubiksCube( filename );
+    //     RC.applyMoves( Solution );
+    //     return RC.isSolved();
+    // }
 
 	public static void main(String[] args) throws IOException, IncorrectFormatException {
-//		System.out.println("number of arguments: " + args.length);
-//		for (int i = 0; i < args.length; i++) {
-//			System.out.println(args[i]);
-//		}
+    //		System.out.println("number of arguments: " + args.length);
+    //		for (int i = 0; i < args.length; i++) {
+    //			System.out.println(args[i]);
+    //		}
 		if (args.length < 2) {
 			System.out.println("File names are not specified");
 			System.out.println("usage: java " + MethodHandles.lookup().lookupClass().getName() + " input_file output_file");
@@ -36,23 +38,23 @@ public class Solver {
         // Pass in Cubie Cube to Search with a max depth of 20 ( According to Sources this is the number that isnt most optimal but for speed)
         // The Timer is set to max 10 seconds 
 		String SolutionPath = Search.solution( CC, 21, 10);
-        System.out.println("Solution: " + SolutionPath);
+        // System.out.println("Solution: " + SolutionPath);
 
         // Testing that the solution algorithm spits out is actually valid
-        System.out.println("Testing solution...");
-        if( TestCorrectSolve( Input_Filename, SolutionPath ) == true ) {
-            System.out.println("This is a valid solution!");
-        } 
-        else{
-            System.out.println("That solution did not work :(");
-        }
+        // System.out.println("Testing solution...");
+        // if( TestCorrectSolve( Input_Filename, SolutionPath ) == true ) {
+        //     System.out.println("This is a valid solution!");
+        // } 
+        // else{
+        //     System.out.println("That solution did not work :(");
+        // }
 		
         // Write to output file
 
         // File output = new File( args[1] );
         try(BufferedWriter writer = new BufferedWriter( new FileWriter( args[1] ) )){
             writer.write( SolutionPath );
-            System.out.printf("Solution Written to file \n");
+            // System.out.printf("Solution Written to file \n");
         }
         catch (IOException e) {
             e.printStackTrace();
